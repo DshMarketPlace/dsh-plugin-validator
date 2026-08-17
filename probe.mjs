@@ -70,6 +70,18 @@ if (install.killed) {
   verdict("timeout", `install exceeded ${TIMEOUT_MS / 1000}s`);
 }
 
+// A registry that refused to serve us measured our traffic, not the plugin.
+// This has to be checked before anything else: the install genuinely failed,
+// so every test below would agree it failed, and 119 working plugins were
+// marked broken because npm was throttling a batch that ran alongside an audit
+// making a thousand requests of its own. `error` is the runner's word for
+// "no verdict", and nothing downstream publishes it.
+if (/ERR_PNPM_FETCH_(429|5\d\d)\b/.test(install.out)) {
+  verdict("error", "the npm registry throttled or failed this run", {
+    log: tail(install.out),
+  });
+}
+
 // `dsh plugin add` exits 0 even when nothing installed — it did so on a machine
 // with no pnpm, printing the reason and returning success. The exit code is
 // therefore not evidence, and the only thing that is, is the profile manifest
