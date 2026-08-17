@@ -171,6 +171,20 @@ if (landed && /declares no dsh\.bundle/.test(install.out)) {
   });
 }
 
+// A real defect, and one worth naming rather than leaving in the catch-all: a
+// package.json saved with a UTF-8 BOM parses nowhere. pnpm refuses to prepare
+// the package, or the harness itself throws out of `readProfileManifest` and
+// takes the whole command down. Windows editors add the BOM silently, so the
+// author has no way to see it — which is the whole argument for saying so.
+if (/Unexpected token '﻿'/.test(install.out)) {
+  verdict("failed", "its package.json starts with a UTF-8 BOM, which JSON.parse rejects", {
+    bundles,
+    dependencies: deps,
+    blockedBuildScripts: blocked,
+    log: tail(install.out),
+  });
+}
+
 verdict("failed", "installed but not registered as a profile bundle", {
   bundles,
   dependencies: deps,
