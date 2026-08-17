@@ -70,14 +70,18 @@ if (install.killed) {
   verdict("timeout", `install exceeded ${TIMEOUT_MS / 1000}s`);
 }
 
-// A registry that refused to serve us measured our traffic, not the plugin.
-// This has to be checked before anything else: the install genuinely failed,
-// so every test below would agree it failed, and 119 working plugins were
-// marked broken because npm was throttling a batch that ran alongside an audit
-// making a thousand requests of its own. `error` is the runner's word for
-// "no verdict", and nothing downstream publishes it.
+// A host that refused to serve us measured our traffic, not the plugin. This
+// has to be checked before anything else: the install genuinely failed, so
+// every test below would agree it failed, and 119 working plugins were marked
+// broken because npm was throttling a batch that ran alongside an audit making
+// a thousand requests of its own. `error` is the runner's word for "no
+// verdict", and nothing downstream publishes it.
+//
+// Not only npm: 28 more were marked broken by a 429 from codeload.github.com,
+// because a source install downloads a tarball from GitHub and GitHub rate
+// limits that too. Whose 429 it is does not matter — it is always ours.
 if (/ERR_PNPM_FETCH_(429|5\d\d)\b/.test(install.out)) {
-  verdict("error", "the npm registry throttled or failed this run", {
+  verdict("error", "a registry throttled or failed this run", {
     log: tail(install.out),
   });
 }
@@ -144,6 +148,22 @@ if (/ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED/.test(install.out)) {
 
 if (landed && blocked.length) {
   verdict("needs-approval", "installs, but a blocked build script stops registration", {
+    bundles,
+    dependencies: deps,
+    blockedBuildScripts: blocked,
+    log: tail(install.out),
+  });
+}
+
+// The harness says this one itself, so there is nothing to infer: a package
+// with no `dsh.bundle` in its manifest installs as an ordinary dependency
+// instead of a profile layer, and the harness's own warning promises that a
+// later version which gains one activates automatically. The install worked.
+// Reporting it as a failure marks a working package broken for being a
+// different kind of package — themes, agent bundles and libraries all land
+// here — so it gets its own verdict rather than the catch-all.
+if (landed && /declares no dsh\.bundle/.test(install.out)) {
+  verdict("not-a-layer", "installs as a plain dependency; it declares no dsh.bundle", {
     bundles,
     dependencies: deps,
     blockedBuildScripts: blocked,
