@@ -116,6 +116,20 @@ if (registered) {
 // this cannot be reported as "broken". It is one `allowBuilds` entry away.
 const landed = name ? deps.includes(name) : deps.length > 0;
 
+// Installing from a git spec makes pnpm run the package's own prepare script
+// to build it, and pnpm refuses until the package is allowlisted. Same shape
+// as a blocked build script and the same fix — an `allowBuilds` entry — so it
+// belongs in the same bucket. Calling it a failure would mark a working plugin
+// broken for doing the one thing a source install has to do.
+if (/ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED/.test(install.out)) {
+  verdict("needs-approval", "source install needs its build approved before it can register", {
+    bundles,
+    dependencies: deps,
+    blockedBuildScripts: blocked.length ? blocked : [target],
+    log: tail(install.out),
+  });
+}
+
 if (landed && blocked.length) {
   verdict("needs-approval", "installs, but a blocked build script stops registration", {
     bundles,
