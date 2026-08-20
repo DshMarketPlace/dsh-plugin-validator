@@ -10,13 +10,25 @@
 # reads like a broken package and is really a missing compiler.
 FROM node:22-bookworm
 
+# COREPACK_HOME is not decoration. Corepack caches the pnpm it prepares under
+# $HOME, `corepack prepare` runs here as root, and the container runs as `node`
+# — so the pinned pnpm landed in /root/.cache where the only user who ever runs
+# it cannot read it. Corepack then silently re-resolved to latest and pulled it
+# over the network on every single run: the version pin below did nothing, and
+# the network became part of the thing under test, which is the one outcome
+# this image exists to prevent. Point it somewhere world-readable instead.
 ENV PNPM_HOME=/usr/local/pnpm \
     PATH=/usr/local/pnpm:$PATH \
+    COREPACK_HOME=/usr/local/corepack \
     DSH_HOME=/work/home \
     npm_config_update_notifier=false
 
+# Pinned, because the verdict has to be about the plugin. pnpm 11 exits
+# non-zero on ERR_PNPM_IGNORED_BUILDS and `dsh` reads that as a failed install,
+# so the same plugin is `needs-approval` on 11 and `passed` on 10.
 RUN corepack enable \
  && corepack prepare pnpm@10 --activate \
+ && chmod -R a+rX "$COREPACK_HOME" \
  && npm install -g @deepseek-ai/dsh --loglevel=error \
  && npm cache clean --force
 
