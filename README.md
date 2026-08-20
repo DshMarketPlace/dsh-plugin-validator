@@ -3,6 +3,7 @@
   <img alt="Dependencies" src="https://img.shields.io/badge/dependencies-none-6b6055?style=flat-square">
   <img alt="Requires" src="https://img.shields.io/badge/requires-docker%20%2B%20node%2022-6b6055?style=flat-square">
   <a href="https://dshmarketplace.dev"><img alt="Used by" src="https://img.shields.io/badge/checked-2%2C426%20plugins-c0561d?style=flat-square"></a>
+  <a href="https://linux.do"><img src="https://img.shields.io/badge/LINUX%20DO-community-c0561d?style=flat-square&labelColor=241f1a" alt="LINUX DO"></a>
 </p>
 
 <p align="center">
@@ -175,6 +176,20 @@ Issues and pull requests welcome — particularly a verdict you think is wrong.
 If a *listing* is wrong, that belongs on the
 [marketplace repo](https://github.com/DshMarketPlace/dshmarketplace); the data
 lives there, not here.
+
+## Contact
+
+- **Community** — [LINUX DO](https://linux.do)
+- **Issues** — [GitHub Issues](https://github.com/DshMarketPlace/dsh-plugin-validator/issues)
+
+## Acknowledgements
+
+- [**LINUX DO**](https://linux.do) — where the DSH ecosystem is actually being
+  discussed, and where this project is published and takes its feedback.
+  Plugins whose authors posted them there carry a verified badge in the
+  catalogue.
+- [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)
+  (CC0-1.0) — the community registry the catalogue is seeded from.
 
 ## Licence
 

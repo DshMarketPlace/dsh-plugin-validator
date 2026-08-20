@@ -3,6 +3,7 @@
   <img alt="Dependencies" src="https://img.shields.io/badge/dependencies-none-6b6055?style=flat-square">
   <img alt="Requires" src="https://img.shields.io/badge/requires-docker%20%2B%20node%2022-6b6055?style=flat-square">
   <a href="https://dshmarketplace.dev"><img alt="Used by" src="https://img.shields.io/badge/已实测-2%2C426%20个插件-c0561d?style=flat-square"></a>
+  <a href="https://linux.do"><img src="https://img.shields.io/badge/LINUX%20DO-community-c0561d?style=flat-square&labelColor=241f1a" alt="LINUX DO"></a>
 </p>
 
 <p align="center">
@@ -155,6 +156,19 @@ runner **故意做成文件进、文件出，手上没有任何凭据**。一个
 欢迎提 issue 和 PR，尤其是你觉得判错了的结论。如果是**某条记录**本身写错了，那属于
 [marketplace 仓库](https://github.com/DshMarketPlace/dshmarketplace) —— 数据在那边，不在
 这里。
+
+## 联系
+
+- **社区** —— [LINUX DO](https://linux.do)
+- **问题反馈** —— [GitHub Issues](https://github.com/DshMarketPlace/dsh-plugin-validator/issues)
+
+## 致谢
+
+- [**LINUX DO**](https://linux.do) —— DSH 生态实际上是在这里被讨论的，这个
+  项目也在这里发布和收反馈。作者本人在 LINUX DO 发过帖的插件，在目录里会带
+  一个认证标记。
+- [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)
+  （CC0-1.0）—— 目录的收录种子来自这里。
 
 ## 授权
 
