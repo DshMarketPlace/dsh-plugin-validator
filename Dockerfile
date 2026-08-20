@@ -39,6 +39,7 @@ RUN corepack enable \
 RUN mkdir -p /work && chown -R node:node /work
 
 COPY --chown=node:node probe.mjs /usr/local/bin/probe.mjs
+COPY --chown=node:node preset.mjs /usr/local/bin/preset.mjs
 
 USER node
 WORKDIR /work

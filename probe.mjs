@@ -103,8 +103,13 @@ const deps = Object.keys(manifest?.dependencies ?? {});
 // Observed, not guessed: pnpm names the packages whose build scripts it
 // refused to run. The catalogue infers this from README keywords today, which
 // is a guess about the same fact.
+// pnpm draws this warning inside a box when it thinks it has a terminal, so
+// the line ends with padding and a `\u2502`. Captured verbatim, that border
+// ends up in `blockedBuilds`, which the public API now serves — so strip the
+// frame before the name, not after someone reads it.
 const blocked = [...install.out.matchAll(/Ignored build scripts:\s*([^\n]+)/g)]
-  .flatMap((m) => m[1].split(",").map((s) => s.trim().replace(/\.$/, "")))
+  .flatMap((m) => m[1].split(","))
+  .map((s) => s.replace(/[\s\u2502|]+$/, "").trim().replace(/\.$/, ""))
   .filter(Boolean);
 
 // npm targets can carry a version range; the bundle list records the bare name.
