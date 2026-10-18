@@ -31,7 +31,7 @@
 命令是**原样整条传进去的，跟 catalogue 上发布的一模一样**。要测的是别人会复制的那条命令，
 不是我们自己拼出来的版本。
 
-## 六种结论
+## 七种结论
 
 其中**只有两种是真的坏了**。
 
@@ -40,6 +40,7 @@
 | `passed` | 装上了，而且注册进了 profile 的 `bundles` | — |
 | `not-a-layer` | 装是装上了，但它没声明 `dsh.bundle`，所以是个普通依赖。theme、agent bundle、库都落在这里；harness 自己也说了，以后版本补上就会自动生效 | — |
 | `needs-approval` | 解析和落盘都没问题，但 build script 被 pnpm 拦了。加一条 `allowBuilds` 就能用 | — |
+| `incompatible` | dsh 还没开始装就拒了：它的 `engines.dsh`（没有的话就看 `@deepseek-ai/dsh*` 的 peer 范围）不覆盖当前 dsh。`requires` 是它要求的范围，`fallback` 是 harness 能接受的最新一版、在另一个干净 profile 里装的结果（`{ version, status }`，一版都不行时 `version` 为 null） | — |
 | `rejected` | 这串东西不是 `dsh plugin add` 命令，或者目标既不是 npm 包名也不是 `github:` spec。什么都没跑 | — |
 | `failed` | 装上了但没注册、manifest 根本没写出来，或者 `package.json` 开头带 UTF-8 BOM | **是** |
 | `timeout` | 超过 180 秒 | **是** |
@@ -47,6 +48,12 @@
 后两类里有两个是被第一版判错才单独拆出来的。`not-a-layer` 在 `failed` 桶里待了一天，
 把能用的 theme 判成坏的，理由只是它不是同一种包。`needs-approval` 管的是源码安装时
 pnpm 拒绝跑 `prepare` —— 而源码安装本来就必须干这件事。
+
+`incompatible` 在 `failed` 里待了三周。dsh 0.2.0-rc.1（2026-09-28）开始拒装为 0.1 写的插件，
+probe 没有这条分支，目录的夜间任务把每一个都当成原因不明的失败撤回，第二天又排进队列。dsh 0.2
+还改了一件事：命令失败时 pnpm 的输出不再打印出来，而是写进一个诊断文件、只打印路径——所以
+probe 现在也会把那个文件读进来，它要匹配的 pnpm 错误码都在里面。每条结论都带上了产生它的
+`dshVersion` 和 `pnpmVersion`，因为从 0.2 起，同一条命令在这一版 harness 上能装，下一版可能就拒。
 
 **429 永远不是结论。** registry 限流的时候 probe 给的是 `error`，下游不会拿它发布任何
 东西。这条分支的由来是：曾经有 119 个能用的插件被 npm 限流判成坏的，另外 28 个死在

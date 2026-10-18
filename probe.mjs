@@ -13,6 +13,8 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { pickVersion } from "./compat.mjs";
+
 /**
  * The same guard the in-DSH plugin uses, for the same reason: this process
  * receives a string from a catalogue and runs it. Everything after the shape
@@ -42,10 +44,17 @@ function run(file, args, opts = {}) {
   });
 }
 
+// Stamped on every verdict once known. From dsh 0.2 the harness refuses
+// plugins built for another version of it, so a verdict that does not say
+// which dsh produced it cannot be read — and for two months none of ours did.
+let stamp = {};
+
 function verdict(status, detail, extra = {}) {
-  process.stdout.write(JSON.stringify({ status, detail, ...extra }) + "\n");
+  process.stdout.write(JSON.stringify({ status, detail, ...stamp, ...extra }) + "\n");
   process.exit(0);
 }
+
+const SEMVER = /\b\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?/;
 
 const command = process.argv[2]?.trim() ?? "";
 const match = COMMAND.exec(command);
@@ -57,14 +66,29 @@ if (!NPM.test(target) && !GITHUB.test(target)) {
   verdict("rejected", "target is neither an npm name nor a github spec");
 }
 
-const home = await mkdtemp(join(tmpdir(), "dsh-"));
-const profile = join(home, "profiles", "web");
+const [dshV, pnpmV] = await Promise.all([run("dsh", ["--version"]), run("pnpm", ["--version"])]);
+stamp = {
+  dshVersion: SEMVER.exec(dshV.out)?.[0] ?? null,
+  pnpmVersion: SEMVER.exec(pnpmV.out)?.[0] ?? null,
+};
 
-const install = await run(
-  "dsh",
-  ["plugin", "--profile", "web", "add", target],
-  { env: { ...process.env, DSH_HOME: home } },
-);
+/** One install into a fresh DSH_HOME, with everything pnpm said attached. */
+async function attempt(spec) {
+  const home = await mkdtemp(join(tmpdir(), "dsh-"));
+  const result = await run("dsh", ["plugin", "--profile", "web", "add", spec], {
+    env: { ...process.env, DSH_HOME: home },
+  });
+  // On failure dsh 0.2 keeps pnpm's own output in a diagnostics file and
+  // prints only its path. Every pnpm error code tested below lives in there,
+  // so without it each of those branches goes blind on exactly the runs that
+  // need it.
+  const diagnostics = /diagnostics: (\S+?\.log)\b/.exec(result.out)?.[1];
+  const extra = diagnostics ? await readFile(diagnostics, "utf8").catch(() => "") : "";
+  return { ...result, home, text: `${result.out}\n${extra}` };
+}
+
+const install = await attempt(target);
+const profile = join(install.home, "profiles", "web");
 
 if (install.killed) {
   verdict("timeout", `install exceeded ${TIMEOUT_MS / 1000}s`);
@@ -80,9 +104,72 @@ if (install.killed) {
 // Not only npm: 28 more were marked broken by a 429 from codeload.github.com,
 // because a source install downloads a tarball from GitHub and GitHub rate
 // limits that too. Whose 429 it is does not matter — it is always ours.
-if (/ERR_PNPM_FETCH_(429|5\d\d)\b/.test(install.out)) {
+if (/ERR_PNPM_FETCH_(429|5\d\d)\b/.test(install.text)) {
   verdict("error", "a registry throttled or failed this run", {
-    log: tail(install.out),
+    log: tail(install.text),
+  });
+}
+
+// From dsh 0.2 the harness checks a plugin's dsh range before installing it
+// and, when the range does not cover the running version, refuses and rolls
+// the profile back. The plugin is not broken; it was built for another dsh,
+// and usually an older release of it fits this one. For three weeks this fell
+// through to "installed but not registered", the nightly retracted it as our
+// own fault, and the next night queued the same plugins again.
+const refusal =
+  /installation rejected: Plugin (\S+)@(\S+) is incompatible with dsh (\S+?): (.*?)\. Running it/.exec(
+    install.text,
+  );
+if (refusal) {
+  const [, pkg, refusedVersion, runtime, said] = refusal;
+  let requires = {};
+  try {
+    requires = JSON.parse(said.slice(said.indexOf("{")));
+  } catch {
+    requires = { raw: said };
+  }
+  const fallback = await fitOlderRelease(pkg, runtime);
+  const ranges = [...new Set(Object.values(requires))].join(", ");
+  verdict(
+    "incompatible",
+    `dsh ${runtime} refuses ${pkg}@${refusedVersion}, which requires dsh ${ranges}` +
+      (fallback?.version
+        ? `; ${pkg}@${fallback.version} ${fallback.status === "passed" ? "installs" : `was tried and ${fallback.status}`}`
+        : fallback
+          ? "; no release of it accepts this dsh"
+          : ""),
+    { requires, refusedVersion, fallback, log: tail(install.text) },
+  );
+}
+
+// dsh kills pnpm when it outgrows the container — a large monorepo cloned and
+// built from source inside 1.5 GB. That measures our sandbox, not the plugin,
+// so like a 429 it is no verdict at all.
+if (/Command was killed with SIGKILL/.test(install.text)) {
+  verdict("error", "pnpm was killed mid-install — the sandbox's memory or time ceiling", {
+    log: tail(install.text),
+  });
+}
+
+// Named so that each reads as what it is rather than as the catch-all. The
+// first is our data (the listing points at a package that no longer exists);
+// the other two are defects in the package.
+if (/ERR_PNPM_NO_VERSIONS/.test(install.text)) {
+  verdict("failed", "the npm package has no published versions — it was unpublished", {
+    log: tail(install.text),
+  });
+}
+if (/ERR_PNPM_SPEC_NOT_SUPPORTED_BY_ANY_RESOLVER[\s\S]*?catalog:/.test(install.text)) {
+  verdict("failed", "a dependency uses pnpm's catalog: protocol, which only resolves inside the author's workspace", {
+    log: tail(install.text),
+  });
+}
+const rejected = /installation rejected: (Cannot validate installed package[^\n]*)/.exec(install.text);
+if (rejected) {
+  // The throwaway profile's path means nothing on a listing page.
+  const why = rejected[1].replace(/\/tmp\/dsh-\w+\/profiles\/web\/node_modules\//g, "").slice(0, 240);
+  verdict("failed", `dsh rejected the installed package: ${why}`, {
+    log: tail(install.text),
   });
 }
 
@@ -94,7 +181,7 @@ let manifest = null;
 try {
   manifest = JSON.parse(await readFile(join(profile, "package.json"), "utf8"));
 } catch {
-  verdict("failed", "no profile manifest was written", { log: tail(install.out) });
+  verdict("failed", "no profile manifest was written", { log: tail(install.text) });
 }
 
 const bundles = manifest?.dsh?.profile?.bundles ?? [];
@@ -107,7 +194,7 @@ const deps = Object.keys(manifest?.dependencies ?? {});
 // the line ends with padding and a `\u2502`. Captured verbatim, that border
 // ends up in `blockedBuilds`, which the public API now serves — so strip the
 // frame before the name, not after someone reads it.
-const blocked = [...install.out.matchAll(/Ignored build scripts:\s*([^\n]+)/g)]
+const blocked = [...install.text.matchAll(/Ignored build scripts:\s*([^\n]+)/g)]
   .flatMap((m) => m[1].split(","))
   .map((s) => s.replace(/[\s\u2502|]+$/, "").trim().replace(/\.$/, ""))
   .filter(Boolean);
@@ -142,12 +229,12 @@ const landed = name ? deps.includes(name) : deps.length > 0;
 // as a blocked build script and the same fix — an `allowBuilds` entry — so it
 // belongs in the same bucket. Calling it a failure would mark a working plugin
 // broken for doing the one thing a source install has to do.
-if (/ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED/.test(install.out)) {
+if (/ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED/.test(install.text)) {
   verdict("needs-approval", "source install needs its build approved before it can register", {
     bundles,
     dependencies: deps,
     blockedBuildScripts: blocked.length ? blocked : [target],
-    log: tail(install.out),
+    log: tail(install.text),
   });
 }
 
@@ -156,7 +243,7 @@ if (landed && blocked.length) {
     bundles,
     dependencies: deps,
     blockedBuildScripts: blocked,
-    log: tail(install.out),
+    log: tail(install.text),
   });
 }
 
@@ -167,12 +254,12 @@ if (landed && blocked.length) {
 // Reporting it as a failure marks a working package broken for being a
 // different kind of package — themes, agent bundles and libraries all land
 // here — so it gets its own verdict rather than the catch-all.
-if (landed && /declares no dsh\.bundle/.test(install.out)) {
+if (landed && /declares no dsh\.bundle/.test(install.text)) {
   verdict("not-a-layer", "installs as a plain dependency; it declares no dsh.bundle", {
     bundles,
     dependencies: deps,
     blockedBuildScripts: blocked,
-    log: tail(install.out),
+    log: tail(install.text),
   });
 }
 
@@ -181,12 +268,12 @@ if (landed && /declares no dsh\.bundle/.test(install.out)) {
 // the package, or the harness itself throws out of `readProfileManifest` and
 // takes the whole command down. Windows editors add the BOM silently, so the
 // author has no way to see it — which is the whole argument for saying so.
-if (/Unexpected token '﻿'/.test(install.out)) {
+if (/Unexpected token '﻿'/.test(install.text)) {
   verdict("failed", "its package.json starts with a UTF-8 BOM, which JSON.parse rejects", {
     bundles,
     dependencies: deps,
     blockedBuildScripts: blocked,
-    log: tail(install.out),
+    log: tail(install.text),
   });
 }
 
@@ -194,8 +281,43 @@ verdict("failed", "installed but not registered as a profile bundle", {
   bundles,
   dependencies: deps,
   blockedBuildScripts: blocked,
-  log: tail(install.out),
+  log: tail(install.text),
 });
+
+/**
+ * The newest release dsh would accept, installed into a second fresh profile.
+ * Only for npm targets — a git source has one version, the one on the branch.
+ * Null when there is nothing to try or the registry cannot be read.
+ */
+async function fitOlderRelease(pkg, runtime) {
+  if (target.startsWith("github:")) return null;
+  let doc;
+  try {
+    const res = await fetch(`https://registry.npmjs.org/${pkg.replace("/", "%2f")}`, {
+      headers: { Accept: "application/vnd.npm.install-v1+json" },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) return null;
+    doc = await res.json();
+  } catch {
+    return null;
+  }
+  const pick = pickVersion(doc, runtime);
+  if (!pick.pin) return { version: null, status: "none" };
+
+  const second = await attempt(`${pkg}@${pick.pin}`);
+  if (second.killed) return { version: pick.pin, status: "timeout" };
+  let m = null;
+  try {
+    m = JSON.parse(await readFile(join(second.home, "profiles", "web", "package.json"), "utf8"));
+  } catch {
+    return { version: pick.pin, status: "failed" };
+  }
+  if ((m?.dsh?.profile?.bundles ?? []).includes(pkg)) return { version: pick.pin, status: "passed" };
+  const landedToo = Object.keys(m?.dependencies ?? {}).includes(pkg);
+  const blockedToo = /Ignored build scripts:|ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED/.test(second.text);
+  return { version: pick.pin, status: landedToo && blockedToo ? "needs-approval" : "failed" };
+}
 
 function tail(text, lines = 24) {
   return text.split("\n").slice(-lines).join("\n").slice(-4000);

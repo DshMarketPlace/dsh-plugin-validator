@@ -35,13 +35,16 @@ reconstruction of it.
 
 ## Verdicts
 
-Six outcomes, and **only two of them are defects**.
+Seven outcomes, and **only two of them are defects**. Every verdict carries
+the `dshVersion` and `pnpmVersion` it was produced on, because from dsh 0.2
+the same command can pass on one harness and be refused by the next.
 
 | Verdict | Meaning | A defect? |
 | --- | --- | --- |
 | `passed` | Installed and registered in the profile's `bundles` | — |
 | `not-a-layer` | Installed fine as a plain dependency; it declares no `dsh.bundle`. Themes, agent bundles and libraries land here, and the harness promises a later version that gains one activates by itself | — |
 | `needs-approval` | Resolved and landed, but a build script was refused. One `allowBuilds` entry away from working | — |
+| `incompatible` | dsh refused it before installing anything: its `engines.dsh`, or its `@deepseek-ai/dsh*` peer ranges, do not cover the running dsh. `requires` says what it asked for, and `fallback` reports the newest release the harness accepts, installed in a second fresh profile (`{ version, status }`, or `version: null` when none fits) | — |
 | `rejected` | The string is not a `dsh plugin add` command, or its target is neither an npm name nor a `github:` spec. Nothing ran | — |
 | `failed` | Installed but never registered, no manifest was written, or `package.json` starts with a UTF-8 BOM | **yes** |
 | `timeout` | Exceeded 180s | **yes** |
@@ -51,6 +54,13 @@ Two of those exist only because the first version got them wrong.
 being a different kind of package. `needs-approval` covers a source install
 whose `prepare` script pnpm declines to run — the one thing every source
 install has to do.
+
+`incompatible` spent three weeks inside `failed`. dsh 0.2.0-rc.1 (28 Sep 2026)
+began refusing plugins built for 0.1, the probe had no branch for it, and the
+catalogue's nightly retracted each one as an unexplained failure and queued it
+again the next night. dsh 0.2 also stopped printing pnpm's output when a command
+fails — it writes it to a diagnostics file and prints the path — so the probe
+now reads that file too; every pnpm error code it matches lives in there.
 
 **A 429 is never a verdict.** If a registry throttles the run, the probe emits
 `error` and nothing downstream publishes it. That branch exists because 119
