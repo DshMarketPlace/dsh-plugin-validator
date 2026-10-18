@@ -343,6 +343,10 @@ function enginesRange(manifest) {
   if (!used.length) return null;
   if (used.some((r) => r === "" || r.startsWith("workspace:"))) return false;
   if (used.length === 1) return used[0];
+  // A hyphen range must be a whole comparator set, so it cannot be joined
+  // with another range's comparators; and one invalid value makes the harness
+  // reject the entire index, not just this entry.
+  if (used.some((r) => / - /.test(r))) return false;
   let combos = [""];
   for (const r of used) {
     combos = combos.flatMap((c) => r.split("||").map((alt) => `${c} ${alt.trim()}`.trim()));
