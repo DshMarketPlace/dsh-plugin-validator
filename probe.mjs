@@ -55,6 +55,9 @@ function verdict(status, detail, extra = {}) {
 }
 
 const SEMVER = /\b\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?/;
+// Declared up here: the verdict branches run at top level, so a constant
+// further down is still uninitialised when they call into it.
+const CURRENT_DSH = new Set(["workspace:*", "workspace:^", "workspace:~"]);
 
 const command = process.argv[2]?.trim() ?? "";
 const match = COMMAND.exec(command);
@@ -213,6 +216,7 @@ if (registered) {
     bundles,
     dependencies: deps,
     blockedBuildScripts: blocked,
+    installed: name ? await release(install.home, name) : null,
   });
 }
 
@@ -313,10 +317,66 @@ async function fitOlderRelease(pkg, runtime) {
   } catch {
     return { version: pick.pin, status: "failed" };
   }
-  if ((m?.dsh?.profile?.bundles ?? []).includes(pkg)) return { version: pick.pin, status: "passed" };
+  if ((m?.dsh?.profile?.bundles ?? []).includes(pkg)) {
+    return { version: pick.pin, status: "passed", installed: await release(second.home, pkg) };
+  }
   const landedToo = Object.keys(m?.dependencies ?? {}).includes(pkg);
   const blockedToo = /Ignored build scripts:|ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED/.test(second.text);
   return { version: pick.pin, status: landedToo && blockedToo ? "needs-approval" : "failed" };
+}
+
+/**
+ * The dsh range a plugin index should list for a manifest, as the harness's
+ * own generator (apps/plugin-market-generator) derives it: `engines.dsh` when
+ * declared, else the conjunction of its dsh peer ranges. Null means any dsh;
+ * false means it cannot be written down, and the release is left unlisted.
+ */
+function enginesRange(manifest) {
+  const declared = manifest.engines?.dsh;
+  const ranges =
+    typeof declared === "string"
+      ? [declared]
+      : Object.entries(manifest.peerDependencies ?? {})
+          .filter(([k, r]) => /^@deepseek-ai\/dsh(?:-|$)/.test(k) && typeof r === "string" && !CURRENT_DSH.has(r))
+          .map(([, r]) => r);
+  const used = [...new Set(ranges.map((r) => r.trim()))].filter((r) => r !== "*");
+  if (!used.length) return null;
+  if (used.some((r) => r === "" || r.startsWith("workspace:"))) return false;
+  if (used.length === 1) return used[0];
+  let combos = [""];
+  for (const r of used) {
+    combos = combos.flatMap((c) => r.split("||").map((alt) => `${c} ${alt.trim()}`.trim()));
+    if (combos.length > 64) return false;
+  }
+  return combos.join(" || ");
+}
+
+/**
+ * What a plugin index needs to list the release that just installed: its
+ * exact version, when npm published it, and the dsh range the harness checks
+ * it against. Read off the package pnpm put in the profile, and the registry's
+ * own clock. Null when the package cannot be read.
+ */
+async function release(home, pkg) {
+  let manifest;
+  try {
+    manifest = JSON.parse(
+      await readFile(join(home, "profiles", "web", "node_modules", pkg, "package.json"), "utf8"),
+    );
+  } catch {
+    return null;
+  }
+  let publishedAt = null;
+  try {
+    const res = await fetch(`https://registry.npmjs.org/${pkg.replace("/", "%2f")}`, {
+      signal: AbortSignal.timeout(20_000),
+    });
+    const at = res.ok ? (await res.json()).time?.[manifest.version] : null;
+    publishedAt = at ? Math.floor(Date.parse(at) / 1000) : null;
+  } catch {
+    // The index skips a release without a publish time; the verdict stands.
+  }
+  return { name: pkg, version: manifest.version, publishedAt, engines: enginesRange(manifest) };
 }
 
 function tail(text, lines = 24) {
